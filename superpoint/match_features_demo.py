@@ -1,12 +1,13 @@
 import argparse
 from pathlib import Path
 
+import extractor
 import cv2
 import numpy as np
 import tensorflow as tf  # noqa: E402
 
-from superpoint.settings import EXPER_PATH  # noqa: E402
-
+from settings import EXPER_PATH  # noqa: E402
+from settings import DATA_PATH  # noqa: E402
 
 def extract_SIFT_keypoints_and_descriptors(img):
     gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -14,33 +15,6 @@ def extract_SIFT_keypoints_and_descriptors(img):
     kp, desc = sift.detectAndCompute(np.squeeze(gray_img), None)
 
     return kp, desc
-
-
-def extract_superpoint_keypoints_and_descriptors(keypoint_map, descriptor_map,
-                                                 keep_k_points=1000):
-
-    def select_k_best(points, k):
-        """ Select the k most probable points (and strip their proba).
-        points has shape (num_points, 3) where the last coordinate is the proba. """
-        sorted_prob = points[points[:, 2].argsort(), :2]
-        start = min(k, points.shape[0])
-        return sorted_prob[-start:, :]
-
-    # Extract keypoints
-    keypoints = np.where(keypoint_map > 0)
-    prob = keypoint_map[keypoints[0], keypoints[1]]
-    keypoints = np.stack([keypoints[0], keypoints[1], prob], axis=-1)
-
-    keypoints = select_k_best(keypoints, keep_k_points)
-    keypoints = keypoints.astype(int)
-
-    # Get descriptors for keypoints
-    desc = descriptor_map[keypoints[:, 0], keypoints[:, 1]]
-
-    # Convert from just pts to cv2.KeyPoints
-    keypoints = [cv2.KeyPoint(p[1], p[0], 1) for p in keypoints]
-
-    return keypoints, desc
 
 
 def match_descriptors(kp1, desc1, kp2, desc2):
@@ -68,6 +42,7 @@ def compute_homography(matched_kp1, matched_kp2):
 
 
 def preprocess_image(img_file, img_size):
+    print(img_file)
     img = cv2.imread(img_file, cv2.IMREAD_COLOR)
     img = cv2.resize(img, img_size)
     img_orig = img.copy()
@@ -123,7 +98,7 @@ if __name__ == '__main__':
                         feed_dict={input_img_tensor: np.expand_dims(img1, 0)})
         keypoint_map1 = np.squeeze(out1[0])
         descriptor_map1 = np.squeeze(out1[1])
-        kp1, desc1 = extract_superpoint_keypoints_and_descriptors(
+        kp1, desc1 = extractor.extract_superpoint_keypoints_and_descriptors(
                 keypoint_map1, descriptor_map1, keep_k_best)
 
         img2, img2_orig = preprocess_image(img2_file, img_size)
@@ -131,7 +106,7 @@ if __name__ == '__main__':
                         feed_dict={input_img_tensor: np.expand_dims(img2, 0)})
         keypoint_map2 = np.squeeze(out2[0])
         descriptor_map2 = np.squeeze(out2[1])
-        kp2, desc2 = extract_superpoint_keypoints_and_descriptors(
+        kp2, desc2 = extractor.extract_superpoint_keypoints_and_descriptors(
                 keypoint_map2, descriptor_map2, keep_k_best)
 
         # Match and get rid of outliers
@@ -145,20 +120,5 @@ if __name__ == '__main__':
                                       singlePointColor=(0, 0, 255))
 
         cv2.imshow("SuperPoint matches", matched_img)
-
-        # Compare SIFT matches
-        sift_kp1, sift_desc1 = extract_SIFT_keypoints_and_descriptors(img1_orig)
-        sift_kp2, sift_desc2 = extract_SIFT_keypoints_and_descriptors(img2_orig)
-        sift_m_kp1, sift_m_kp2, sift_matches = match_descriptors(
-                sift_kp1, sift_desc1, sift_kp2, sift_desc2)
-        sift_H, sift_inliers = compute_homography(sift_m_kp1, sift_m_kp2)
-
-        # Draw SIFT matches
-        sift_matches = np.array(sift_matches)[sift_inliers.astype(bool)].tolist()
-        sift_matched_img = cv2.drawMatches(img1_orig, sift_kp1, img2_orig,
-                                           sift_kp2, sift_matches, None,
-                                           matchColor=(0, 255, 0),
-                                           singlePointColor=(0, 0, 255))
-        cv2.imshow("SIFT matches", sift_matched_img)
 
         cv2.waitKey(0)
